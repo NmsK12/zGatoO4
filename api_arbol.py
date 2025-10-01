@@ -322,11 +322,11 @@ def health():
         'timestamp': datetime.now().isoformat()
     })
 
+# Inicializar Telethon cuando se importa el módulo (para Gunicorn)
+init_telethon_thread()
+
 def main():
     """Función principal."""
-    # Inicializar Telethon en hilo separado
-    init_telethon_thread()
-    
     # Iniciar Flask
     port = int(os.getenv('PORT', 8080))
     logger.info(f"Iniciando API en puerto {port}")

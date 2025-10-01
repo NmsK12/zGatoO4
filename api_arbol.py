@@ -191,8 +191,7 @@ async def consult_arbol_async(dni_number):
                 
                 return {
                     'success': True,
-                    'text_data': combined_text,
-                    'parsed_data': parsed_data
+                    'data': parsed_data
                 }
             
             # Si no se encontró respuesta, esperar antes del siguiente intento
@@ -338,11 +337,7 @@ def ag_result():
         result = consult_arbol_sync(dni)
         
         if result['success']:
-            return jsonify({
-                'success': True,
-                'data': result['parsed_data'],
-                'raw_text': result['text_data']
-            })
+            return jsonify(result['data'])
         else:
             return jsonify(result), 500
             

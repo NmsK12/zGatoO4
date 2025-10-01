@@ -18,6 +18,7 @@ from io import BytesIO
 
 from flask import Flask, jsonify, request, send_file, make_response
 from PIL import Image
+from database import validate_api_key, init_database
 from telethon import TelegramClient
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.types import MessageMediaPhoto
@@ -306,36 +307,37 @@ def init_telethon_thread():
 # Crear la aplicación Flask
 app = Flask(__name__)
 
+# Inicializar base de datos
+init_database()
+
 @app.route('/')
 def home():
     """Página de inicio con información de la API."""
     return jsonify({
-        'servicio': 'API Árbol Genealógico - WolfData Dox',
-        'version': '1.0.0',
-        'endpoints': {
-            '/ag': {
-                'metodo': 'GET',
-                'parametros': 'dni',
-                'descripcion': 'Consulta el árbol genealógico de una persona',
-                'ejemplo': '/ag?dni=12345678'
-            },
-            '/health': {
-                'metodo': 'GET',
-                'descripcion': 'Verificar estado del servicio'
-            }
-        },
-        'documentacion': 'https://github.com/NmsK12/zGatoO4'
+        'servicio': 'API Árbol Genealógico',
+        'comando': '/ag?dni=12345678&key=TU_API_KEY',
+        'info': '@zGatoO - @WinniePoohOFC - @choco_tete'
     })
 
 @app.route('/ag')
 def ag_result():
     """Endpoint para consultar árbol genealógico."""
+    # Validar API Key
+    api_key = request.args.get('key') or request.headers.get('X-API-Key')
+    validation = validate_api_key(api_key)
+    
+    if not validation['valid']:
+        return jsonify({
+            'success': False,
+            'error': validation['error']
+        }), 401
+    
     dni = request.args.get('dni')
     
     if not dni:
         return jsonify({
             'success': False,
-            'error': 'Parámetro DNI requerido'
+            'error': 'Parámetro DNI requerido. Use: /ag?dni=12345678&key=TU_API_KEY'
         }), 400
     
     if not dni.isdigit() or len(dni) != 8:

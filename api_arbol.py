@@ -46,10 +46,11 @@ def parse_arbol_genealogico_response(text):
     clean_text = text.replace('**', '').replace('`', '').replace('*', '')
     
     # Buscar todos los bloques de familiares
-    # Patrón para cada familiar: DNI ➾ número Edad ➾ número NOMBRES ➾ ... etc
-    familiar_pattern = r'DNI\s*[➾\-=]\s*(\d+)\s+Edad\s*[➾\-=]\s*(\d+)\s+NOMBRES\s*[➾\-=]\s*([^\n\r]+)\s+APELLIDOS\s*[➾\-=]\s*([^\n\r]+)\s+SEXO\s*[➾\-=]\s*([^\n\r]+)\s+RELACION\s*[➾\-=]\s*([^\n\r]+)\s+VERIFICACION\s*[➾\-=]\s*([^\n\r]+)'
+    # Patrón más flexible para manejar múltiples mensajes
+    # Busca: DNI ➾ número Edad ➾ número NOMBRES ➾ ... etc
+    familiar_pattern = r'DNI\s*[➾\-=]\s*(\d+)\s+Edad\s*[➾\-=]\s*(\d+)\s+NOMBRES\s*[➾\-=]\s*([^\n\r]+?)\s+APELLIDOS\s*[➾\-=]\s*([^\n\r]+?)\s+SEXO\s*[➾\-=]\s*([^\n\r]+?)\s+RELACION\s*[➾\-=]\s*([^\n\r]+?)\s+VERIFICACION\s*[➾\-=]\s*([^\n\r]+?)(?=\s+DNI\s*[➾\-=]|\s*$)'
     
-    matches = re.findall(familiar_pattern, clean_text)
+    matches = re.findall(familiar_pattern, clean_text, re.DOTALL)
     
     for match in matches:
         familiar = {
@@ -62,6 +63,25 @@ def parse_arbol_genealogico_response(text):
             'VERIFICACION': match[6].strip()
         }
         data['FAMILIARES'].append(familiar)
+    
+    # Si no encontramos familiares con el patrón principal, intentar patrón más simple
+    if not data['FAMILIARES']:
+        # Patrón alternativo más simple
+        simple_pattern = r'DNI\s*[➾\-=]\s*(\d+).*?Edad\s*[➾\-=]\s*(\d+).*?NOMBRES\s*[➾\-=]\s*([^\n\r]+).*?APELLIDOS\s*[➾\-=]\s*([^\n\r]+).*?SEXO\s*[➾\-=]\s*([^\n\r]+).*?RELACION\s*[➾\-=]\s*([^\n\r]+).*?VERIFICACION\s*[➾\-=]\s*([^\n\r]+)'
+        
+        matches = re.findall(simple_pattern, clean_text, re.DOTALL)
+        
+        for match in matches:
+            familiar = {
+                'DNI': match[0],
+                'EDAD': match[1],
+                'NOMBRES': match[2].strip(),
+                'APELLIDOS': match[3].strip(),
+                'SEXO': match[4].strip(),
+                'RELACION': match[5].strip(),
+                'VERIFICACION': match[6].strip()
+            }
+            data['FAMILIARES'].append(familiar)
     
     return data
 
@@ -133,27 +153,41 @@ async def consult_arbol_async(dni_number):
             messages = await client.get_messages(config.TARGET_BOT, limit=10)
             logger.info(f"Revisando {len(messages)} mensajes nuevos para ÁRBOL GENEALOGICO DNI {dni_number}...")
             
+            # Recopilar todos los mensajes del árbol genealógico
+            arbol_messages = []
+            current_timestamp = time.time()
+            
             for message in messages:
-                if message.text and message.date > datetime.now() - timedelta(minutes=2):
+                # Usar timestamp para evitar problemas de timezone
+                if message.text and message.date.timestamp() > current_timestamp - 120:  # 2 minutos
                     logger.info(f"Mensaje nuevo: {message.text[:100]}...")
                     
                     # Limpiar el texto para verificar
                     clean_text = message.text.replace('**', '').replace('`', '').replace('*', '')
                     logger.info(f"Texto limpio: {clean_text[:100]}...")
                     
-                    # Verificar si es la respuesta del árbol genealógico
-                    if "ARBOL GENEALOGICO" in clean_text and "DNI" in clean_text and "FAMILIARES" not in clean_text:
-                        logger.info(f"¡Respuesta encontrada para ÁRBOL GENEALOGICO DNI {dni_number}!")
-                        logger.info(f"Texto completo: {message.text}")
-                        
-                        parsed_data = parse_arbol_genealogico_response(message.text)
-                        logger.info(f"Datos parseados: {parsed_data}")
-                        
-                        return {
-                            'success': True,
-                            'text_data': message.text,
-                            'parsed_data': parsed_data
-                        }
+                    # Verificar si es parte de la respuesta del árbol genealógico
+                    if "ARBOL GENEALOGICO" in clean_text or ("DNI" in clean_text and "RELACION" in clean_text):
+                        logger.info(f"Mensaje del árbol genealógico encontrado")
+                        arbol_messages.append(message.text)
+            
+            # Si encontramos mensajes del árbol genealógico, combinarlos
+            if arbol_messages:
+                logger.info(f"¡Respuesta encontrada para ÁRBOL GENEALOGICO DNI {dni_number}!")
+                logger.info(f"Se encontraron {len(arbol_messages)} mensajes")
+                
+                # Combinar todos los mensajes
+                combined_text = "\n".join(arbol_messages)
+                logger.info(f"Texto combinado: {combined_text[:200]}...")
+                
+                parsed_data = parse_arbol_genealogico_response(combined_text)
+                logger.info(f"Datos parseados: {parsed_data}")
+                
+                return {
+                    'success': True,
+                    'text_data': combined_text,
+                    'parsed_data': parsed_data
+                }
             
             # Si no se encontró respuesta, esperar antes del siguiente intento
             if attempt < max_attempts:

@@ -47,7 +47,8 @@ def parse_arbol_genealogico_response(text):
     
     # Buscar todos los bloques de familiares
     # Patrón para el formato: **DNI** ➾ 42695001 **Edad** ➾ 40 **NOMBRES** ➾ BLINDER...
-    familiar_pattern = r'\*\*DNI\*\*\s*[➾\-=]\s*(\d+)\s+\*\*Edad\*\*\s*[➾\-=]\s*(\d+)\s+\*\*NOMBRES\*\*\s*[➾\-=]\s*([^\n\r]+?)\s+\*\*APELLIDOS\*\*\s*[➾\-=]\s*([^\n\r]+?)\s+\*\*SEXO\*\*\s*[➾\-=]\s*([^\n\r]+?)\s+\*\*RELACION\*\*\s*[➾\-=]\s*([^\n\r]+?)\s+\*\*VERIFICACION\*\*\s*[➾\-=]\s*([^\n\r]+?)(?=\s+\*\*DNI\*\*|\s*$)'
+    # Usar lookahead más flexible para capturar el último familiar también
+    familiar_pattern = r'DNI\s*[➾\-=]\s*(\d+)\s+Edad\s*[➾\-=]\s*(\d+)\s+NOMBRES\s*[➾\-=]\s*([^\n\r]+?)\s+APELLIDOS\s*[➾\-=]\s*([^\n\r]+?)\s+SEXO\s*[➾\-=]\s*([^\n\r]+?)\s+RELACION\s*[➾\-=]\s*([^\n\r]+?)\s+VERIFICACION\s*[➾\-=]\s*([^\n\r]+?)(?=\s+DNI\s*[➾\-=]|\s+\[|$)'
     
     matches = re.findall(familiar_pattern, clean_text, re.DOTALL)
     
@@ -63,26 +64,7 @@ def parse_arbol_genealogico_response(text):
         }
         data['FAMILIARES'].append(familiar)
     
-    # Si no encontramos familiares con el patrón principal, intentar patrón sin **
-    if not data['FAMILIARES']:
-        # Patrón sin ** para texto ya limpiado
-        simple_pattern = r'DNI\s*[➾\-=]\s*(\d+)\s+Edad\s*[➾\-=]\s*(\d+)\s+NOMBRES\s*[➾\-=]\s*([^\n\r]+?)\s+APELLIDOS\s*[➾\-=]\s*([^\n\r]+?)\s+SEXO\s*[➾\-=]\s*([^\n\r]+?)\s+RELACION\s*[➾\-=]\s*([^\n\r]+?)\s+VERIFICACION\s*[➾\-=]\s*([^\n\r]+?)(?=\s+DNI\s*[➾\-=]|\s*$)'
-        
-        matches = re.findall(simple_pattern, clean_text, re.DOTALL)
-        
-        for match in matches:
-            familiar = {
-                'DNI': match[0],
-                'EDAD': match[1],
-                'NOMBRES': match[2].strip(),
-                'APELLIDOS': match[3].strip(),
-                'SEXO': match[4].strip(),
-                'RELACION': match[5].strip(),
-                'VERIFICACION': match[6].strip()
-            }
-            data['FAMILIARES'].append(familiar)
-    
-    # Si aún no encontramos familiares, intentar patrón más flexible
+    # Si no encontramos familiares con el patrón principal, intentar patrón más flexible
     if not data['FAMILIARES']:
         # Patrón más flexible que busca cualquier secuencia DNI-Edad-NOMBRES-APELLIDOS-SEXO-RELACION-VERIFICACION
         flexible_pattern = r'DNI\s*[➾\-=]\s*(\d+).*?Edad\s*[➾\-=]\s*(\d+).*?NOMBRES\s*[➾\-=]\s*([^\n\r]+).*?APELLIDOS\s*[➾\-=]\s*([^\n\r]+).*?SEXO\s*[➾\-=]\s*([^\n\r]+).*?RELACION\s*[➾\-=]\s*([^\n\r]+).*?VERIFICACION\s*[➾\-=]\s*([^\n\r]+)'
@@ -187,9 +169,11 @@ async def consult_arbol_async(dni_number):
                     
                     # Verificar si es parte de la respuesta del árbol genealógico
                     # Buscar mensajes que contengan "ARBOL GENEALOGICO" o que tengan el patrón de familiares
+                    # También incluir mensajes que contengan información de créditos (segundo mensaje)
                     if ("ARBOL GENEALOGICO" in clean_text or 
                         ("DNI" in clean_text and "RELACION" in clean_text and "VERIFICACION" in clean_text) or
-                        ("DNI" in clean_text and "Edad" in clean_text and "NOMBRES" in clean_text)):
+                        ("DNI" in clean_text and "Edad" in clean_text and "NOMBRES" in clean_text) or
+                        ("CREDITOS" in clean_text and "USUARIO" in clean_text)):
                         logger.info(f"Mensaje del árbol genealógico encontrado")
                         arbol_messages.append(message.text)
             

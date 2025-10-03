@@ -13,6 +13,7 @@ import os
 import re
 import time
 import threading
+import uuid
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -86,53 +87,60 @@ def parse_arbol_genealogico_response(text):
     
     return data
 
-def consult_arbol_sync(dni_number):
+def consult_arbol_sync(dni_number, request_id=None):
     """Consulta el árbol genealógico usando Telethon de forma síncrona."""
     global client, loop
+    
+    # Generar request_id único si no se proporciona
+    if not request_id:
+        request_id = str(uuid.uuid4())[:8]
     
     try:
         # Verificar que el cliente esté disponible
         if not client:
             return {
                 'success': False,
-                'error': 'Cliente de Telegram no inicializado'
+                'error': 'Cliente de Telegram no inicializado',
+                'request_id': request_id
             }
         
         # Ejecutar la consulta asíncrona en el loop existente
-        future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number), loop)
+        future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number, request_id), loop)
         result = future.result(timeout=35)  # 35 segundos de timeout
         return result
         
     except asyncio.TimeoutError:
-        logger.error(f"Timeout consultando ÁRBOL GENEALOGICO DNI {dni_number}")
+        logger.error(f"[{request_id}] Timeout consultando ÁRBOL GENEALOGICO DNI {dni_number}")
         return {
             'success': False,
-            'error': 'Timeout: No se recibió respuesta en 35 segundos'
+            'error': 'Timeout: No se recibió respuesta en 35 segundos',
+            'request_id': request_id
         }
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Error consultando ÁRBOL GENEALOGICO DNI {dni_number}: {error_msg}")
+        logger.error(f"[{request_id}] Error consultando ÁRBOL GENEALOGICO DNI {dni_number}: {error_msg}")
         
         # Si es error de desconexión, intentar reconectar
         if "disconnected" in error_msg.lower() or "connection" in error_msg.lower():
-            logger.info("Error de desconexión detectado, intentando reconectar...")
+            logger.info(f"[{request_id}] Error de desconexión detectado, intentando reconectar...")
             try:
                 restart_telethon()
                 # Esperar un poco para que se reconecte
                 time.sleep(3)
                 # Intentar la consulta nuevamente
-                future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number), loop)
+                future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number, request_id), loop)
                 result = future.result(timeout=35)
                 return result
             except Exception as retry_error:
-                logger.error(f"Error en reintento: {str(retry_error)}")
+                logger.error(f"[{request_id}] Error en reintento: {str(retry_error)}")
         
         return {
             'success': False,
-            'error': f'Error en la consulta: {error_msg}'
+            'error': f'Error en la consulta: {error_msg}',
+            'request_id': request_id
         }
 
-async def consult_arbol_async(dni_number):
+async def consult_arbol_async(dni_number, request_id):
     """Consulta asíncrona del árbol genealógico."""
     global client
     
@@ -140,19 +148,19 @@ async def consult_arbol_async(dni_number):
         max_attempts = 3  # Máximo 3 intentos
         
         for attempt in range(1, max_attempts + 1):
-            logger.info(f"Intento {attempt}/{max_attempts} para ÁRBOL GENEALOGICO DNI {dni_number}")
+            logger.info(f"[{request_id}] Intento {attempt}/{max_attempts} para ÁRBOL GENEALOGICO DNI {dni_number}")
             
-            # Enviar comando /ag
+            # Enviar comando /ag normal (sin request_id visible)
             command = f"/ag {dni_number}"
             sent_message = await client.send_message(config.TARGET_BOT, command)
-            logger.info(f"Comando /ag enviado correctamente (intento {attempt})")
+            logger.info(f"[{request_id}] Comando /ag enviado correctamente (intento {attempt})")
             
             # Esperar un poco para que llegue la respuesta
             await asyncio.sleep(3)
             
             # Obtener mensajes recientes
             messages = await client.get_messages(config.TARGET_BOT, limit=20)
-            logger.info(f"Revisando {len(messages)} mensajes nuevos para ÁRBOL GENEALOGICO DNI {dni_number}...")
+            logger.info(f"[{request_id}] Revisando {len(messages)} mensajes nuevos para ÁRBOL GENEALOGICO DNI {dni_number}...")
             
             # Recopilar todos los mensajes del árbol genealógico que sean respuestas a nuestro comando
             arbol_messages = []
@@ -162,11 +170,11 @@ async def consult_arbol_async(dni_number):
             for message in messages:
                 # Usar timestamp para evitar problemas de timezone
                 if message.text and message.date.timestamp() > command_timestamp and message.date.timestamp() > current_timestamp - 300:  # 5 minutos
-                    logger.info(f"Mensaje nuevo: {message.text[:100]}...")
+                    logger.info(f"[{request_id}] Mensaje nuevo: {message.text[:100]}...")
                     
                     # Limpiar el texto para verificar
                     clean_text = message.text.replace('**', '').replace('`', '').replace('*', '')
-                    logger.info(f"Texto limpio: {clean_text[:100]}...")
+                    logger.info(f"[{request_id}] Texto limpio: {clean_text[:100]}...")
                     
                     # Verificar si es parte de la respuesta del árbol genealógico
                     # Buscar mensajes que contengan "ARBOL GENEALOGICO" o que tengan el patrón de familiares
@@ -175,58 +183,61 @@ async def consult_arbol_async(dni_number):
                         ("DNI" in clean_text and "RELACION" in clean_text and "VERIFICACION" in clean_text) or
                         ("DNI" in clean_text and "Edad" in clean_text and "NOMBRES" in clean_text) or
                         ("CREDITOS" in clean_text and "USUARIO" in clean_text)):
-                        logger.info(f"Mensaje del árbol genealógico encontrado")
+                        logger.info(f"[{request_id}] Mensaje del árbol genealógico encontrado")
                         arbol_messages.append(message.text)
             
             # Si encontramos mensajes del árbol genealógico, combinarlos
             if arbol_messages:
-                logger.info(f"¡Respuesta encontrada para ÁRBOL GENEALOGICO DNI {dni_number}!")
-                logger.info(f"Se encontraron {len(arbol_messages)} mensajes")
+                logger.info(f"[{request_id}] ¡Respuesta encontrada para ÁRBOL GENEALOGICO DNI {dni_number}!")
+                logger.info(f"[{request_id}] Se encontraron {len(arbol_messages)} mensajes")
                 
                 # Combinar todos los mensajes
                 combined_text = "\n".join(arbol_messages)
-                logger.info(f"Texto combinado: {combined_text[:200]}...")
+                logger.info(f"[{request_id}] Texto combinado: {combined_text[:200]}...")
                 
                 parsed_data = parse_arbol_genealogico_response(combined_text)
-                logger.info(f"Datos parseados: {parsed_data}")
+                logger.info(f"[{request_id}] Datos parseados: {parsed_data}")
                 
                 return {
                     'success': True,
-                    'data': parsed_data
+                    'data': parsed_data,
+                    'request_id': request_id
                 }
             
             # Si no se encontró respuesta, esperar antes del siguiente intento
             if attempt < max_attempts:
-                logger.warning(f"No se detectó respuesta en intento {attempt}. Esperando 3 segundos...")
+                logger.warning(f"[{request_id}] No se detectó respuesta en intento {attempt}. Esperando 3 segundos...")
                 await asyncio.sleep(3)
         
-        logger.error(f"Timeout consultando ÁRBOL GENEALOGICO DNI {dni_number}")
+        logger.error(f"[{request_id}] Timeout consultando ÁRBOL GENEALOGICO DNI {dni_number}")
         return {
             'success': False,
-            'error': 'Timeout: No se recibió respuesta después de 3 intentos'
+            'error': 'Timeout: No se recibió respuesta después de 3 intentos',
+            'request_id': request_id
         }
         
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Error consultando ÁRBOL GENEALOGICO DNI {dni_number}: {error_msg}")
+        logger.error(f"[{request_id}] Error consultando ÁRBOL GENEALOGICO DNI {dni_number}: {error_msg}")
         
         # Si es error de desconexión, intentar reconectar
         if "disconnected" in error_msg.lower() or "connection" in error_msg.lower():
-            logger.info("Error de desconexión detectado, intentando reconectar...")
+            logger.info(f"[{request_id}] Error de desconexión detectado, intentando reconectar...")
             try:
                 restart_telethon()
                 # Esperar un poco para que se reconecte
                 time.sleep(3)
                 # Intentar la consulta nuevamente
-                future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number), loop)
+                future = asyncio.run_coroutine_threadsafe(consult_arbol_async(dni_number, request_id), loop)
                 result = future.result(timeout=35)
                 return result
             except Exception as retry_error:
-                logger.error(f"Error en reintento: {str(retry_error)}")
+                logger.error(f"[{request_id}] Error en reintento: {str(retry_error)}")
         
         return {
             'success': False,
-            'error': f'Error en la consulta: {error_msg}'
+            'error': f'Error en la consulta: {error_msg}',
+            'request_id': request_id
         }
 
 def restart_telethon():
@@ -346,11 +357,16 @@ def ag_result():
             'error': 'DNI debe ser un número de 8 dígitos'
         }), 400
     
+    # Generar request_id único para esta consulta
+    request_id = str(uuid.uuid4())[:8]
+    
     try:
-        result = consult_arbol_sync(dni)
+        result = consult_arbol_sync(dni, request_id)
         
         if result['success']:
-            return jsonify(result['data'])
+            response_data = result['data']
+            response_data['request_id'] = result.get('request_id', request_id)
+            return jsonify(response_data)
         else:
             return jsonify(result), 500
             
